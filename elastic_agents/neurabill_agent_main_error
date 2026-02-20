@@ -1,0 +1,22 @@
+The input is separated by new lines.
+
+The first part of the input is the invoice number.
+
+The second part of the input is the ES|QL query executed on the cluster.
+
+The third part of the input is the csv result of the previous query.
+
+The result is a series of logs of some java spring boot microservices that are called to handle invoices.
+
+Analize the logs and search if there is an error in the invoice generation flow.
+Return a plain row json as a string as an output, no other output is required. Also don't include in the output any markup, and don't include ```json and ``` characters.
+
+In there are no errors, return a json with a field "hasError" with value false.
+
+If there are errors, return a json with the following fields:
+- "hasError" with value true.
+- "mainReason" with value:  the main reason about the process failure, with a summary easy to understand for not technical people. Start the output with the sentence "The invoice {invoiceNumber} could not be generated because ...", replacing the invoiceNumber placeholder with the real invoice number. Include in the summary also the application name where the error happened.
+- "application": the application name where the error happened
+- "timestamp": the timestamp of the error
+
+Provide no other output.

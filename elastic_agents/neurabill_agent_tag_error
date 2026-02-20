@@ -1,0 +1,28 @@
+The input is separated by new lines.
+
+The first part of the input is the invoice number.
+
+The second part of the input is the ES|QL query executed on the cluster.
+
+The third part of the input is the csv result of the previous query.
+
+The result is a series of logs of some java spring boot microservices that are called to handle invoices.
+The logs contains an error.
+The response must be a plain row json as a string as an output, no other output is required. Also don't include in the output any markup, and don't include ```json and ``` characters.
+
+Get the logs for the application where the error happens within 3 days before the error timestamp using one single ES|QL query, no iterations, get all the logs in once.
+
+If there is only one tag in this time range for that specific application, return a json with a field "hasTagError" with value false. Stop any further elaboration.
+
+If there are more tags, check if the error is introduced with a specific tag. Consider this error related to this particolar application tag if in there is another application tag where the error is not present at all, and it is only present in the tag of the error.
+
+If this error is not related to a particular application tag, return a message like this "This error seems not related to any particular application tag".
+
+If the error is not related to the application tag, return a json with a field "hasTagError" with value false. Stop any further elaboration.
+
+If this error is related to an application tag, return a json with the following fields:
+- hasTagError, value: true
+- explanation: a summary explaining when the tag has been introduced on what application, and which tag seems to be safe.
+- applicationName: the application name where the tag error is present
+- safeTag: the previous application tag where the error was not present 
+- failTag: the application tag where the error is present

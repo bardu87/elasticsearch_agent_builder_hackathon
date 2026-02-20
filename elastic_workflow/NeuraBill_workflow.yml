@@ -1,0 +1,152 @@
+version: "1"
+name: NeuraBill_workflow
+description: Search in application logs to find error in invoice generation giving the invoice number
+enabled: true
+triggers:
+  - type: manual
+
+consts:
+  index: java_invoice_logs
+
+inputs:
+  - name: invoice_number
+    type: string
+    required: true
+    default: "6630404543"
+    description: "The invoice number to search for. Example of invoices: 5823 -> ok, 1504 -> incomplete data, 5462 -> sign, 1922 -> tag problem, 6857 -> file system problem"
+
+steps:  
+  - name: slack_message_start
+    type: slack
+    connector-id: 76dbf530-651e-4144-a516-0668234f288c
+    with:
+      message: "Started invoice generation error analysis for invoice {{inputs.invoice_number}}"
+
+  - name: set_invoice_query
+    type: data.set
+    with:
+      invoice_query: "FROM {{consts.index}} | WHERE message:\"{{inputs.invoice_number}}\" | KEEP traceId"
+
+  - name: search_for_invoice_logs
+    type: elasticsearch.esql.query
+    with: 
+      query: "{{ variables.invoice_query }}"
+
+  - name: set_search_by_traceid_query
+    type: data.set
+    with:
+      traceid_query: "FROM {{consts.index}} | WHERE traceId in (\"{{ steps.search_for_invoice_logs.output | map: 'values' | map: '0' | uniq | join: '\",\"'}}\") | SORT @timestamp asc"
+
+  - name: search_by_trace_ids_logs
+    type: elasticsearch.esql.query
+    with: 
+      format: csv
+      query: "{{ variables.traceid_query }}"
+
+  - name: analyze_errors
+    type: ai.agent
+    agent-id: neurabill_agent_main_error
+    with:
+      message: "{{inputs.invoice_number}}\n\n{{ variables.traceid_query }}\n\n{{ steps.search_by_trace_ids_logs.output }}"
+
+  - name: parse_response
+    type: data.set
+    with:
+      has_error: "{{steps.analyze_errors.output.message | json_parse | map: 'hasError'}}"
+      error_main_reason: "{{steps.analyze_errors.output.message | json_parse | map: 'mainReason'}}"
+      error_application: "{{steps.analyze_errors.output.message | json_parse | map: 'application'}}"
+      error_timestamp: "{{steps.analyze_errors.output.message | json_parse | map: 'timestamp'}}"
+
+  - name: check_error_found
+    type: if
+    condition: "variables.has_error: false"
+    steps:
+      - name: slack_message_no_errors
+        type: slack
+        connector-id: 76dbf530-651e-4144-a516-0668234f288c
+        with:
+          message: "Seems that there are no errors in the generation of invoice {{inputs.invoice_number}}. No further analysis will be executed."
+    else:
+      - name: slack_message_errors
+        type: slack
+        connector-id: 76dbf530-651e-4144-a516-0668234f288c
+        with:
+          message: "{{variables.error_main_reason}}\n\nChecking if the error is introduced by a specific application tag."
+
+      - name: tag_error_analysis
+        type: ai.agent
+        agent-id: neurabill_agent_tag_error
+        with:
+          message: "{{inputs.invoice_number}}\n\n{{ variables.traceid_query }}\n\n{{ steps.search_by_trace_ids_logs.output }}"
+
+      - name: parse_tag_error_response
+        type: data.set
+        with:
+          hasTagError: "{{steps.tag_error_analysis.output.message | json_parse | map: 'hasTagError'}}"
+          tagErrorExplanation: "{{steps.tag_error_analysis.output.message | json_parse | map: 'explanation'}}"
+          applicationName: "{{steps.tag_error_analysis.output.message | json_parse | map: 'applicationName'}}"
+          safeTag: "{{steps.tag_error_analysis.output.message | json_parse | map: 'safeTag'}}"
+          failTag: "{{steps.tag_error_analysis.output.message | json_parse | map: 'failTag'}}"
+
+      - name: check_tag_error_found
+        type: if
+        condition: "variables.hasTagError: false"
+        steps:
+          - name: slack_message_no_tag_errors
+            type: slack
+            connector-id: 76dbf530-651e-4144-a516-0668234f288c
+            with:
+              message: "The error seems not related to a specific application tag.\n\nChecking if the error is systematic or temporary."
+
+          - name: systematic_or_temporary_failure_error_analysis
+            type: ai.agent
+            agent-id: neurabill_agent_systematic_or_temporary_failure
+            with:
+              message: "{{inputs.invoice_number}}\n\n{{ variables.traceid_query }}\n\n{{ steps.search_by_trace_ids_logs.output }}"
+
+          - name: parse_systematic_error_response
+            type: data.set
+            with:
+              isErrorSystematic: "{{steps.systematic_or_temporary_failure_error_analysis.output.message | json_parse | map: 'isError'}}"
+              systematicErrorExplanation: "{{steps.systematic_or_temporary_failure_error_analysis.output.message | json_parse | map: 'explanation'}}"
+
+          - name: check_systematic_error_found
+            type: if
+            condition: "variables.isErrorSystematic: false"
+            steps:
+              - name: slack_message_no_systematic_error
+                type: slack
+                connector-id: 76dbf530-651e-4144-a516-0668234f288c
+                with:
+                  message: "This seems to be a spot error.\n\nNo further analysis will be executed."
+            else:
+              - name: slack_message_systematic_error
+                type: slack
+                connector-id: 76dbf530-651e-4144-a516-0668234f288c
+                with:
+                  message: "{{variables.systematicErrorExplanation}}\n\nNo further analysis will be executed."
+
+        else:
+          - name: slack_message_search_github
+            type: slack
+            connector-id: 76dbf530-651e-4144-a516-0668234f288c
+            with:
+              message: "{{variables.tagErrorExplanation}}\n\nGetting commit messages from github."
+
+          - name: get_commit_info_from_github
+            type: http
+            with:
+              url: "https://api.github.com/repos/bardu87/{{variables.applicationName}}/compare/{{variables.safeTag}}...{{variables.failTag}}"
+              method: GET
+              timeout: "30s"
+
+          - name: parse_github_response
+            type: data.set
+            with:
+              commitHistory: "- {{steps.get_commit_info_from_github.output.data.commits | map: 'commit' | map: 'message' | join: '\n- ' }}"
+
+          - name: slack_message_github_commits
+            type: slack
+            connector-id: 76dbf530-651e-4144-a516-0668234f288c
+            with:
+              message: "These are the commits between version {{variables.safeTag}} and {{variables.failTag}} for {{variables.applicationName}}:\n{{variables.commitHistory}}"

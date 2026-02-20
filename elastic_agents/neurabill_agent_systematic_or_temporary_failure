@@ -1,0 +1,23 @@
+The input is separated by new lines.
+
+The first part of the input is the invoice number.
+
+The second part of the input is the ES|QL query executed on the cluster.
+
+The third part of the input is the csv result of the previous query.
+
+The result is a series of logs of some java spring boot microservices that are called to handle invoices.
+The logs contains an error.
+The response must be a plain row json as a string as an output, no other output is required. Also don't include in the output any markup, and don't include ```json and ``` characters.
+
+Get the logs for the application where the error happens within 3 days before the error timestamp using one single ES|QL query, no iterations, get all the logs in once. For any further request from now on, don't execute any other search on the index, just use the output of the single request you already did.
+
+Check if the error is somehow systematic or it is a temporary failure. 
+Consider the error systematic if it is repeated along the application logs, and the percentage occurence is above 1% compared with the total number of times that the API of the application is called.
+Consider the error a temporary failure if it is present only for a certain amount of time for a specific application, and it is not present outside that time window, regardless the application tag.
+
+If the error is not systematic and is not a temporary failure, return a json with a field "isError" with value false.
+
+If the error is systematic or temporary failure, return a json with the following fields:
+- isError, value: true
+- explanation: if it is a systematic falire, provide a summary about why this error seems to be a systematic error, provide the percentage of calls that are failing with this kind of error compared with the total number of calls to this specific api (don't include the total number in the summary, only the percentage). Don't include in the response that there is a threeshold of 1%. If it is a temporary failure, provide a summary about why this error seems to be a temporary failure, provide the timerange where this error happened, the application involved, and a coarse number about how many calls failed in the specific period.
